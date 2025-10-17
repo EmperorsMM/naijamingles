@@ -1,47 +1,62 @@
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { nonce } from "@/lib/crypto";
+// app/api/paystack/init/route.ts
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST() {
-  const supabase = createRouteHandlerClient({ cookies });
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+export const dynamic = "force-dynamic"; // don't try to pre-render this
+export const runtime = "nodejs";
 
-  const reference = `nm_${nonce(10)}`;
-  const initBody = {
-    email: user.email,
-    amount: 500000, // kobo
+type InitRequest = {
+  amount_kobo?: number;          // kobo (e.g. 500000 = ₦5,000)
+  email?: string;
+  user_id?: string;
+  plan_code?: string;
+  reference?: string;
+};
+
+export async function POST(req: NextRequest) {
+  // Parse body safely (don't crash on invalid JSON)
+  const payload = (await req.json().catch(() => ({}))) as InitRequest;
+
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+
+  // ✅ Free-first launch: don’t crash if secret is missing.
+  // Return a soft error the UI can handle, but DO NOT throw.
+  if (!secret) {
+    return NextResponse.json(
+      { ok: false, error: "PAYSTACK_SECRET_KEY not set on server" },
+      { status: 200 }
+    );
+  }
+
+  const amount = payload.amount_kobo ?? 500000; // default ₦5,000
+  const email = payload.email ?? "test@example.com";
+  const reference = payload.reference ?? `nm_${Date.now()}`;
+
+  const body = {
+    email,
+    amount, // in kobo
     reference,
-    callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/subscribe`,
-    plan: process.env.PAYSTACK_PLAN_CODE,
-    metadata: { user_id: user.id, plan: "monthly" },
+    metadata: { user_id: payload.user_id ?? null },
+    ...(payload.plan_code ? { plan: payload.plan_code } : {}),
+    callback_url: `${process.env.NEXT_PUBLIC_SITE_URL || ""}/checkout/verify?ref=${reference}`,
   };
 
   const res = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+      Authorization: `Bearer ${secret}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(initBody),
+    body: JSON.stringify(body),
     cache: "no-store",
   });
-  const json = await res.json();
 
-  if (!res.ok || !json.status) {
-    return NextResponse.json({ error: json.message || "init failed" }, { status: 500 });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return NextResponse.json(
+      { ok: false, error: data?.message || "Paystack init failed" },
+      { status: 400 }
+    );
   }
 
-  await supabase.from("transactions").insert({
-    user_id: user.id,
-    provider: "paystack",
-    provider_ref: reference,
-    amount: 5000,
-    currency: "NGN",
-    status: "initialized",
-    raw: json,
-  });
-
-  return NextResponse.json({ reference, auth_url: json.data.authorization_url });
+  return NextResponse.json({ ok: true, data });
 }

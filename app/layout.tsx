@@ -4,6 +4,7 @@ import SessionBadge from "@/components/SessionBadge";
 import { cookies } from "next/headers";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import Logo from "@/components/Logo";
+import Script from "next/script"; // ⬅️ AdSense loader
 
 export const metadata: Metadata = {
   title: "Naijamingles",
@@ -22,6 +23,14 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className="font-sans antialiased">
+        {/* Google AdSense (loads once, non-blocking) */}
+        <Script
+          id="adsense-loader"
+          strategy="afterInteractive"
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7837094299840102"
+          crossOrigin="anonymous"
+        />
+
         <nav className="p-3 border-b flex gap-4 text-sm items-center">
           <a href="/" className="flex items-center gap-2">
             <Logo />
